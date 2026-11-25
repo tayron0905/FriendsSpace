@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, Bookmark, Camera, Check, Heart, Home, Image as ImageIcon,
+  Bookmark, Camera, Check, Heart, Home, Image as ImageIcon,
   Link2, LogOut, MessageCircle, Plus, Search, Send, Settings, Shield,
   Sparkles, Users, Upload, X
 } from 'lucide-react'

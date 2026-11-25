@@ -1,0 +1,5 @@
+[functions.create-invite]
+verify_jwt = true
+
+[functions.redeem-invite]
+verify_jwt = false

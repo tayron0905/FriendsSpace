@@ -1,47 +1,50 @@
 # FriendsSpace
 
-**Ein gemeinsamer Ort für Fotos, Videos und Erinnerungen – für deinen Freundeskreis.**
-
-FriendsSpace verbindet ein öffentlich sichtbares Fotoalbum mit einem geschlossenen Mitgliederbereich. Neue Mitglieder können später ausschließlich über gültige Einladungslinks beitreten.
-
-## Tech-Stack
-- React 18 + TypeScript + Vite
-- Tailwind CSS (Basis eingerichtet) und responsives eigenes Styling
-- Lucide Icons
-- Supabase für Auth, Datenbank und Storage (später verbinden)
+FriendsSpace ist ein öffentlich sichtbares Foto- und Videoalbum mit sozialem Feed und geschlossenem Mitgliederkreis. Neue Konten können ausschließlich über einen gültigen Einladungslink erstellt werden.
 
 ## Lokal starten
 ```bash
 npm install
+cp .env.example .env.local
+# Supabase URL und anon key in .env.local eintragen
 npm run dev
 ```
 
-Produktionsbuild und Typprüfung:
-```bash
-npm run typecheck
-npm run build
-```
+## Supabase einrichten
+1. Supabase-Projekt erstellen.
+2. Den vollständigen Inhalt von `supabase/schema.sql` im SQL Editor ausführen.
+3. Project URL und anon/public key aus Project Settings > API in `.env.local` eintragen.
+4. Supabase CLI installieren und im Projekt anmelden.
+5. Edge Functions deployen:
+   ```bash
+   supabase functions deploy create-invite
+   supabase functions deploy redeem-invite
+   ```
+6. Für `create-invite` das Function Secret `SITE_URL=https://DEINE-DOMAIN` setzen.
+7. In Supabase Authentication die öffentliche Registrierung/Signups deaktivieren. Neue Konten werden ausschließlich über die serverseitige Redeem-Function erstellt.
+8. Den ersten Admin nach dem Erstellen des ersten Kontos einmalig im SQL Editor festlegen:
+   ```sql
+   insert into public.memberships(user_id, role)
+   select id, 'admin' from auth.users where email = 'DEINE-ADMIN-EMAIL'
+   on conflict (user_id) do update set role = 'admin';
+   ```
+   Nur deine eigene, verifizierte Admin-E-Mail verwenden.
 
 ## Enthalten
-- Responsive Startseite mit Feed und Fotogalerie
-- Story-Leiste, Freundesübersicht und Suche
-- Interaktive Demo-Likes und Merkliste
-- Dialoge zum Vorbereiten eines Beitrags und Einladen von Freunden
-- Supabase-Schema-Grundlage unter `supabase/schema.sql`
-- Umgebungsvariablen-Vorlage unter `.env.example`
-
-**Hinweis:** Das Frontend nutzt derzeit Beispieldaten. Anmeldung, echte Beiträge, Uploads, Kommentare, Benachrichtigungen und Einladungen benötigen die spätere Supabase-Anbindung.
-
-## Supabase später verbinden
-1. Neues Supabase-Projekt erstellen.
-2. `supabase/schema.sql` im SQL Editor ausführen und die Policies vor Produktivbetrieb sorgfältig prüfen.
-3. `.env.example` nach `.env.local` kopieren und URL sowie anon key eintragen.
-4. Supabase Client, Auth und Storage integrieren.
-5. Einladungstokens ausschließlich serverseitig (z. B. Supabase Edge Function) hashen und validieren.
+- Öffentlicher Feed und Fotoalbum
+- Anmeldung und Einladungscode-Registrierung
+- Beiträge mit Bild- und Video-Upload (max. 50 MB)
+- Likes und Kommentare
+- Mitgliederübersicht und Profilbearbeitung
+- Highlights
+- Einmalige, sieben Tage gültige Admin-Einladungslinks
+- Supabase Row Level Security und Storage Policies
+- GitHub Actions Build-Workflow
 
 ## Sicherheitsregeln
-- Öffentliche Fotos und öffentliche Beiträge sind ohne Anmeldung sichtbar.
-- Nur eingeladene Personen dürfen Mitglied werden und Inhalte veröffentlichen.
-- Rollen und Mitgliedschaften werden serverseitig kontrolliert.
-- Ein Einladungslink verleiht niemals Adminrechte.
-- Service-Role-Keys dürfen niemals im Browser-Frontend hinterlegt werden.
+- Öffentliche Beiträge, Profile, Kommentare, Likes und Medien sind lesbar.
+- Schreiben ist Mitgliedern vorbehalten; Profile können nur selbst bearbeitet werden.
+- Einladungen werden serverseitig gehasht, laufen nach sieben Tagen ab und sind einmalig verwendbar.
+- Nur Admins können Einladungen erstellen. Einladungscodes vergeben keine Adminrechte.
+- Der Service-Role-Key wird ausschließlich in Edge Functions verwendet und gehört niemals in das Frontend.
+- Es gibt keine Demo-Benutzer oder Beispieldatensätze im Repository.

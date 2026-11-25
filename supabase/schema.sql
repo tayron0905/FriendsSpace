@@ -210,3 +210,7 @@ $$;
 drop trigger if exists after_post_comment_notification on public.comments;
 create trigger after_post_comment_notification after insert on public.comments for each row execute procedure public.notify_post_comment();
 create index if not exists notifications_recipient_created_idx on public.notifications(recipient_id,created_at desc);
+
+
+drop policy if exists "Admins remove memberships" on public.memberships;
+create policy "Admins remove memberships" on public.memberships for delete to authenticated using (public.is_admin());

@@ -162,3 +162,51 @@ drop policy if exists "Members upload own media objects" on storage.objects;
 create policy "Members upload own media objects" on storage.objects for insert to authenticated with check (bucket_id = 'public-media' and (storage.foldername(name))[1] = auth.uid()::text and public.is_member());
 drop policy if exists "Owners delete own media objects" on storage.objects;
 create policy "Owners delete own media objects" on storage.objects for delete to authenticated using (bucket_id = 'public-media' and owner_id = auth.uid()::text);
+
+
+-- Notifications generated automatically for post likes and comments.
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_id uuid not null references public.profiles(id) on delete cascade,
+  actor_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null check (type in ('like','comment')),
+  post_id uuid not null references public.posts(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+alter table public.notifications enable row level security;
+drop policy if exists "Users read own notifications" on public.notifications;
+create policy "Users read own notifications" on public.notifications for select to authenticated using (recipient_id = auth.uid());
+drop policy if exists "Users mark own notifications read" on public.notifications;
+create policy "Users mark own notifications read" on public.notifications for update to authenticated using (recipient_id = auth.uid()) with check (recipient_id = auth.uid());
+
+create or replace function public.notify_post_like()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+declare post_owner uuid;
+begin
+  select author_id into post_owner from public.posts where id = new.post_id;
+  if post_owner is not null and post_owner <> new.user_id then
+    insert into public.notifications(recipient_id,actor_id,type,post_id) values(post_owner,new.user_id,'like',new.post_id);
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists after_post_like_notification on public.likes;
+create trigger after_post_like_notification after insert on public.likes for each row execute procedure public.notify_post_like();
+
+create or replace function public.notify_post_comment()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+declare post_owner uuid;
+begin
+  select author_id into post_owner from public.posts where id = new.post_id;
+  if post_owner is not null and post_owner <> new.author_id then
+    insert into public.notifications(recipient_id,actor_id,type,post_id) values(post_owner,new.author_id,'comment',new.post_id);
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists after_post_comment_notification on public.comments;
+create trigger after_post_comment_notification after insert on public.comments for each row execute procedure public.notify_post_comment();
+create index if not exists notifications_recipient_created_idx on public.notifications(recipient_id,created_at desc);

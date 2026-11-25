@@ -21,3 +21,5 @@ export type Highlight = {
   cover_url?: string | null
   created_at: string
 }
+
+export type NotificationItem = { id: string; type: 'like' | 'comment'; post_id: string; created_at: string; read_at: string | null; actor: Profile | null }

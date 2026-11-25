@@ -20,13 +20,14 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [adminMembers, setAdminMembers] = useState<{ user_id: string; role: string; profiles: Profile | null }[]>([])
   const [posts, setPosts] = useState<Post[]>([])
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
   const [friends, setFriends] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
-  const [authMode, setAuthMode] = useState<'login' | 'join'>('login')
+  const [authMode, setAuthMode] = useState<'login' | 'join'>(new URLSearchParams(window.location.search).has('invite') ? 'join' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [username, setUsername] = useState('')
@@ -62,8 +63,13 @@ export default function App() {
       setProfile((ownProfile as Profile | null) ?? null)
       const { data: membership } = await supabase.from('memberships').select('role').eq('user_id', userId).maybeSingle()
       setIsAdmin(membership?.role === 'admin')
+      if (membership?.role === 'admin') {
+        const { data: memberData } = await supabase.from('memberships').select('user_id,role,profiles(id,username,display_name,bio,avatar_url)').order('joined_at', { ascending: true })
+        setAdminMembers((memberData ?? []) as unknown as { user_id: string; role: string; profiles: Profile | null }[])
+      } else setAdminMembers([])
     } else {
       setNotifications([])
+      setAdminMembers([])
       setProfile(null)
       setIsAdmin(false)
     }
@@ -153,6 +159,13 @@ export default function App() {
     else { setCommentDrafts(current => ({ ...current, [postId]: '' })); await loadContent() }
   }
 
+  async function removeMember(memberId: string) {
+    if (!supabase || !isAdmin || memberId === userId) return
+    if (!window.confirm('Mitgliedschaft wirklich entfernen? Das Konto selbst bleibt bestehen.')) return
+    const { error } = await supabase.from('memberships').delete().eq('user_id', memberId)
+    if (error) notify(error.message); else { await loadContent(); notify('Mitgliedschaft entfernt.') }
+  }
+
   async function createInvite() {
     if (!supabase || !isAdmin) return
     setBusy(true)
@@ -219,7 +232,7 @@ export default function App() {
           <button className="auth-switch" onClick={() => setAuthMode(authMode === 'login' ? 'join' : 'login')}>{authMode === 'login' ? 'Du hast einen Einladungslink? Konto erstellen' : 'Schon Mitglied? Anmelden'}</button>
         </section>}
         {profile && view === 'Profil' && <section className="side-card profile-editor"><h2>Dein Profil</h2><form onSubmit={updateProfile} className="auth-form"><label>Anzeigename<input value={profile.display_name} onChange={e => setProfile({ ...profile, display_name: e.target.value })}/></label><label>Benutzername<input value={profile.username} onChange={e => setProfile({ ...profile, username: e.target.value })}/></label><label>Über dich<textarea value={profile.bio ?? ''} onChange={e => setProfile({ ...profile, bio: e.target.value })}/></label><button className="primary-button">Profil speichern <Check size={16}/></button></form></section>}
-        {profile && view === 'Admin' && isAdmin && <section className="side-card profile-editor"><span className="eyebrow">MITGLIEDER EINLADEN</span><h2>Einladungslink erstellen</h2><p>Einladungslinks sind einmalig verwendbar und laufen nach sieben Tagen ab.</p><button className="primary-button" onClick={() => void createInvite()} disabled={busy}>Einladung erstellen <Link2 size={16}/></button>{inviteUrl && <div className="invite-preview"><span>{inviteUrl}</span><button onClick={() => void navigator.clipboard?.writeText(inviteUrl)}>Kopieren</button></div>}</section>}
+        {profile && view === 'Admin' && isAdmin && <section className="admin-dashboard"><div className="side-card profile-editor"><span className="eyebrow">MITGLIEDER EINLADEN</span><h2>Einladungslink erstellen</h2><p>Einladungslinks sind einmalig verwendbar und laufen nach sieben Tagen ab.</p><button className="primary-button" onClick={() => void createInvite()} disabled={busy}>Einladung erstellen <Link2 size={16}/></button>{inviteUrl && <div className="invite-preview"><span>{inviteUrl}</span><button onClick={() => void navigator.clipboard?.writeText(inviteUrl)}>Kopieren</button></div>}</div><div className="side-card profile-editor"><h2>Mitglieder verwalten</h2><p>{adminMembers.length} Mitglied(er) im FriendsSpace</p><div className="admin-member-list">{adminMembers.map(member => <div className="admin-member" key={member.user_id}><div className="avatar">{member.profiles?.display_name?.slice(0,2).toUpperCase() ?? 'FS'}</div><div><strong>{member.profiles?.display_name ?? 'Unbekannt'}</strong><span>@{member.profiles?.username ?? '—'} · {member.role === 'admin' ? 'Administrator' : 'Mitglied'}</span></div>{member.user_id !== userId && <button className="remove-member" onClick={() => void removeMember(member.user_id)}>Entfernen</button>}</div>)}</div></div></section>}
         {profile && view === 'Admin' && !isAdmin && <section className="side-card profile-editor"><h2>Kein Zugriff</h2><p>Die Einladungsverwaltung ist nur für Administratoren sichtbar.</p></section>}
         {view === 'Highlights' && <section className="side-card profile-editor"><h2>Highlights</h2>{profile && <form className="inline-form" onSubmit={createHighlight}><input value={highlightTitle} onChange={e => setHighlightTitle(e.target.value)} placeholder="Name des Highlights"/><button className="primary-button"><Plus size={16}/> Erstellen</button></form>}<div className="highlight-grid">{highlights.map(item => <article className="highlight-tile" key={item.id}><div className="highlight-cover"><Bookmark size={25}/></div><strong>{item.title}</strong></article>)}</div>{!highlights.length && <p className="empty-copy">Noch keine Highlights vorhanden.</p>}</section>}
         {view === 'Freunde' && <section className="side-card profile-editor"><h2>Mitglieder</h2><div className="friends-grid">{friends.map(friend => <article className="friend-card" key={friend.id}><div className="avatar">{friend.display_name.slice(0, 2).toUpperCase()}</div><strong>{friend.display_name}</strong><span>@{friend.username}</span></article>)}</div>{!friends.length && <p className="empty-copy">Noch keine weiteren Mitglieder.</p>}</section>}

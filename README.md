@@ -13,14 +13,14 @@ npm run dev
 ## Supabase einrichten
 1. Supabase-Projekt erstellen.
 2. Den vollständigen Inhalt von `supabase/schema.sql` im SQL Editor ausführen.
-3. Project URL und anon/public key aus Project Settings > API in `.env.local` eintragen.
+3. Für dein Projekt `knpmfhxqahwwdwefrwtk` die Datei `.env.example` nach `.env.local` kopieren. URL und veröffentlichbaren `sb_publishable_...`-Schlüssel sind dort bereits vorbereitet.
 4. Supabase CLI installieren und im Projekt anmelden.
 5. Edge Functions deployen:
    ```bash
    supabase functions deploy create-invite
    supabase functions deploy redeem-invite
    ```
-6. Für `create-invite` das Function Secret `SITE_URL=https://DEINE-DOMAIN` setzen.
+6. Für `create-invite` das Function Secret `SITE_URL=https://DEINE-DOMAIN` setzen (beim lokalen Test z. B. `http://localhost:5173`).
 7. In Supabase Authentication die öffentliche Registrierung/Signups deaktivieren. Neue Konten werden ausschließlich über die serverseitige Redeem-Function erstellt.
 8. Den ersten Admin nach dem Erstellen des ersten Kontos einmalig im SQL Editor festlegen:
    ```sql

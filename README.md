@@ -34,7 +34,7 @@ npm run dev
 - Öffentlicher Feed und Fotoalbum
 - Anmeldung und Einladungscode-Registrierung
 - Beiträge mit Bild- und Video-Upload (max. 50 MB)
-- Likes und Kommentare
+- Likes, Kommentare und In-App-Benachrichtigungen
 - Mitgliederübersicht und Profilbearbeitung
 - Highlights
 - Einmalige, sieben Tage gültige Admin-Einladungslinks

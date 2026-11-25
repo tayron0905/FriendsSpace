@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import {
   Activity, Bell, Bookmark, Camera, Check, ChevronDown, Compass, Heart,
-  Home, Image, Link2, LogOut, Menu, MessageCircle, MoreHorizontal,
-  Plus, Search, Send, Settings, Shield, Sparkles, Users, X
+  Home, Image, Link2, Menu, MessageCircle, MoreHorizontal,
+  Plus, Search, Send, Settings, Sparkles, Users, X
 } from 'lucide-react'
 
 type Photo = { id: number; src: string; caption: string; user: string; avatar: string; likes: number; place: string }

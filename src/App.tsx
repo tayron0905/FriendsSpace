@@ -1,11 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Bookmark, Camera, Check, Heart, Home, Image as ImageIcon,
+  Bell, Bookmark, Camera, Check, Heart, Home, Image as ImageIcon,
   Link2, LogOut, MessageCircle, Plus, Search, Send, Settings, Shield,
   Sparkles, Users, Upload, X
 } from 'lucide-react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { Post, Profile, Highlight } from './lib/types'
+import type { Post, Profile, Highlight, NotificationItem } from './lib/types'
 import './app.css'
 
 type View = 'Startseite' | 'Fotoalbum' | 'Highlights' | 'Freunde' | 'Profil' | 'Admin'
@@ -22,6 +22,8 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [posts, setPosts] = useState<Post[]>([])
   const [highlights, setHighlights] = useState<Highlight[]>([])
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [showNotifications, setShowNotifications] = useState(false)
   const [friends, setFriends] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'login' | 'join'>('login')
@@ -54,11 +56,14 @@ export default function App() {
     const { data: profileData } = await supabase.from('profiles').select('id,username,display_name,bio,avatar_url').order('display_name').limit(100)
     setFriends(((profileData ?? []) as Profile[]).filter(p => p.id !== userId))
     if (userId) {
+      const { data: notificationData } = await supabase.from('notifications').select('id,type,post_id,created_at,read_at,actor:profiles!notifications_actor_id_fkey(id,username,display_name,bio,avatar_url)').eq('recipient_id', userId).order('created_at', { ascending: false }).limit(25)
+      setNotifications((notificationData ?? []) as unknown as NotificationItem[])
       const { data: ownProfile } = await supabase.from('profiles').select('id,username,display_name,bio,avatar_url').eq('id', userId).maybeSingle()
       setProfile((ownProfile as Profile | null) ?? null)
       const { data: membership } = await supabase.from('memberships').select('role').eq('user_id', userId).maybeSingle()
       setIsAdmin(membership?.role === 'admin')
     } else {
+      setNotifications([])
       setProfile(null)
       setIsAdmin(false)
     }
@@ -172,6 +177,12 @@ export default function App() {
     if (error) notify(error.message); else notify('Profil gespeichert.')
   }
 
+  async function markNotificationRead(item: NotificationItem) {
+    if (!supabase || !userId || item.read_at) return
+    const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', item.id).eq('recipient_id', userId)
+    if (error) notify(error.message); else await loadContent()
+  }
+
   async function signOut() {
     if (!supabase) return
     await supabase.auth.signOut()
@@ -193,7 +204,8 @@ export default function App() {
       </div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb">Dein privater Kreis <span>/</span> <b>{view}</b></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Momente suchen …"/></label>{profile && <div className="avatar avatar-me top-avatar">{profile.display_name.slice(0, 2).toUpperCase()}</div>}</div></header>
+      <header className="topbar"><div className="breadcrumb">Dein privater Kreis <span>/</span> <b>{view}</b></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Momente suchen …"/></label>{profile && <button className="icon-button notification-button" onClick={() => setShowNotifications(v => !v)} aria-label="Benachrichtigungen"><Bell size={17}/>{notifications.some(n => !n.read_at) && <i/>}</button>}{profile && <div className="avatar avatar-me top-avatar">{profile.display_name.slice(0, 2).toUpperCase()}</div>}</div></header>
+      {showNotifications && profile && <section className="notification-panel"><div className="notification-panel-head"><strong>Benachrichtigungen</strong><button onClick={() => setShowNotifications(false)}><X size={15}/></button></div>{notifications.length ? notifications.map(item => <button className={item.read_at ? 'notification-row read' : 'notification-row'} key={item.id} onClick={() => void markNotificationRead(item)}><span className="notification-dot"/><span><b>{item.actor?.display_name ?? 'Ein Mitglied'}</b> {item.type === 'like' ? 'gefällt dein Beitrag.' : 'hat deinen Beitrag kommentiert.'}<small>{new Date(item.created_at).toLocaleString('de-DE')}</small></span></button>) : <p className="empty-copy">Noch keine Benachrichtigungen.</p>}</section>}
       <div className="content">
         <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> MIT DEINEN MENSCHEN</div><h1>{view === 'Startseite' ? <>Schön, dass du <em>da bist.</em></> : view}</h1><p className="subtitle">Die schönsten Momente sind die, die wir miteinander teilen.</p></div>{profile && <button className="primary-button" onClick={() => setShowPostForm(true)}><Plus size={18}/> Beitrag erstellen</button>}</section>
         {!isSupabaseConfigured && <div className="setup-notice"><Shield size={20}/><div><strong>Supabase ist noch nicht verbunden</strong><p>Trage die Projekt-URL und den anon key aus Supabase in <code>.env.local</code> ein. Danach werden Anmeldung, Uploads und Datenbankfunktionen aktiviert.</p></div></div>}

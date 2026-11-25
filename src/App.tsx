@@ -1,73 +1,223 @@
-import { useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, Bell, Bookmark, Camera, Check, ChevronDown, Compass, Heart,
-  Home, Image, Link2, Menu, MessageCircle, MoreHorizontal,
-  Plus, Search, Send, Settings, Sparkles, Users, X
+  Activity, Bookmark, Camera, Check, Heart, Home, Image as ImageIcon,
+  Link2, LogOut, MessageCircle, Plus, Search, Send, Settings, Shield,
+  Sparkles, Users, Upload, X
 } from 'lucide-react'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import type { Post, Profile, Highlight } from './lib/types'
+import './app.css'
 
-type Photo = { id: number; src: string; caption: string; user: string; avatar: string; likes: number; place: string }
-const photos: Photo[] = [
-  { id: 1, src: 'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=900&q=85', caption: 'Einfach mal raus. 🌿', user: 'Lena Weber', avatar: 'LW', likes: 28, place: 'Dolomiten' },
-  { id: 2, src: 'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=900&q=85', caption: 'Meer geht immer.', user: 'Jonas Richter', avatar: 'JR', likes: 16, place: 'Am Meer' },
-  { id: 3, src: 'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=900&q=85', caption: 'Golden hour ✨', user: 'Mia Schneider', avatar: 'MS', likes: 42, place: 'Abendstimmung' },
-  { id: 4, src: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=900&q=85', caption: 'Wochenendmodus aktiviert', user: 'Noah Fischer', avatar: 'NF', likes: 11, place: 'Unterwegs' },
-  { id: 5, src: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=900&q=85', caption: 'Kleine Auszeit.', user: 'Lena Weber', avatar: 'LW', likes: 34, place: 'Natur' },
-  { id: 6, src: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=900&q=85', caption: 'Das sollten wir zusammen machen!', user: 'Alex Berger', avatar: 'AB', likes: 19, place: 'Berge' },
+type View = 'Startseite' | 'Fotoalbum' | 'Highlights' | 'Freunde' | 'Profil' | 'Admin'
+const nav: { label: View; icon: typeof Home }[] = [
+  { label: 'Startseite', icon: Home }, { label: 'Fotoalbum', icon: ImageIcon },
+  { label: 'Highlights', icon: Bookmark }, { label: 'Freunde', icon: Users },
+  { label: 'Profil', icon: Settings },
 ]
-const people = [{ name: 'Lena Weber', initials: 'LW', color: 'lilac', status: 'Vor 12 Min.' }, { name: 'Jonas Richter', initials: 'JR', color: 'peach', status: 'Vor 1 Std.' }, { name: 'Mia Schneider', initials: 'MS', color: 'mint', status: 'Vor 2 Std.' }, { name: 'Noah Fischer', initials: 'NF', color: 'blue', status: 'Gestern' }]
-const stories = [{ name: 'Deine Story', initials: '+', color: 'add' }, ...people.map(p => ({ name: p.name.split(' ')[0], initials: p.initials, color: p.color }))]
 
 export default function App() {
-  const [active, setActive] = useState('Startseite')
-  const [liked, setLiked] = useState<number[]>([])
-  const [saved, setSaved] = useState<number[]>([])
-  const [query, setQuery] = useState('')
-  const [showInvite, setShowInvite] = useState(false)
-  const [showComposer, setShowComposer] = useState(false)
-  const [mobileNav, setMobileNav] = useState(false)
-  const [notice, setNotice] = useState('')
-  const [newPost, setNewPost] = useState('')
-  const filtered = useMemo(() => photos.filter(p => (p.caption + p.user + p.place).toLowerCase().includes(query.toLowerCase())), [query])
-  const nav = [
-    { label: 'Startseite', icon: Home }, { label: 'Entdecken', icon: Compass },
-    { label: 'Fotoalbum', icon: Image }, { label: 'Highlights', icon: Bookmark },
-    { label: 'Freunde', icon: Users }, { label: 'Aktivitäten', icon: Activity },
-  ]
-  const toggle = (id: number, list: number[], setter: (v: number[]) => void) => setter(list.includes(id) ? list.filter(x => x !== id) : [...list, id])
-  const toast = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(''), 2600) }
+  const [view, setView] = useState<View>('Startseite')
+  const [userId, setUserId] = useState<string | null>(null)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [posts, setPosts] = useState<Post[]>([])
+  const [highlights, setHighlights] = useState<Highlight[]>([])
+  const [friends, setFriends] = useState<Profile[]>([])
+  const [loading, setLoading] = useState(true)
+  const [authMode, setAuthMode] = useState<'login' | 'join'>('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [username, setUsername] = useState('')
+  const [inviteToken, setInviteToken] = useState(new URLSearchParams(window.location.search).get('invite') ?? '')
+  const [caption, setCaption] = useState('')
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({})
+  const [search, setSearch] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [highlightTitle, setHighlightTitle] = useState('')
+  const [showPostForm, setShowPostForm] = useState(false)
+
+  const notify = (text: string) => { setMessage(text); window.setTimeout(() => setMessage(''), 3500) }
+
+  const loadContent = useCallback(async () => {
+    if (!supabase) { setLoading(false); return }
+    setLoading(true)
+    const { data: postData, error } = await supabase.from('posts')
+      .select('id,author_id,caption,created_at,profiles(id,username,display_name,bio,avatar_url),media(id,storage_path,media_type),likes(user_id),comments(id,body,created_at,profiles(id,username,display_name,bio,avatar_url))')
+      .order('created_at', { ascending: false }).limit(60)
+    if (error) notify(error.message)
+    else setPosts((postData ?? []) as unknown as Post[])
+    const { data: highlightData } = await supabase.from('highlights').select('id,title,created_at').order('created_at', { ascending: false })
+    setHighlights((highlightData ?? []) as Highlight[])
+    const { data: profileData } = await supabase.from('profiles').select('id,username,display_name,bio,avatar_url').order('display_name').limit(100)
+    setFriends(((profileData ?? []) as Profile[]).filter(p => p.id !== userId))
+    if (userId) {
+      const { data: ownProfile } = await supabase.from('profiles').select('id,username,display_name,bio,avatar_url').eq('id', userId).maybeSingle()
+      setProfile((ownProfile as Profile | null) ?? null)
+      const { data: membership } = await supabase.from('memberships').select('role').eq('user_id', userId).maybeSingle()
+      setIsAdmin(membership?.role === 'admin')
+    } else {
+      setProfile(null)
+      setIsAdmin(false)
+    }
+    setLoading(false)
+  }, [userId])
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return }
+    supabase.auth.getSession().then(({ data }) => setUserId(data.session?.user.id ?? null))
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setUserId(session?.user.id ?? null))
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => { void loadContent() }, [loadContent])
+
+  const filteredPosts = useMemo(() => posts.filter(post =>
+    [post.caption ?? '', post.profiles?.display_name ?? '', post.profiles?.username ?? '']
+      .join(' ').toLowerCase().includes(search.toLowerCase())
+  ), [posts, search])
+
+  async function handleAuth(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase) return
+    setBusy(true)
+    try {
+      if (authMode === 'login') {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+      } else {
+        if (!inviteToken.trim()) throw new Error('Du benötigst einen gültigen Einladungslink.')
+        const { error } = await supabase.functions.invoke('redeem-invite', { body: { email, password, username, invite_token: inviteToken } })
+        if (error) throw error
+        const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
+        if (loginError) throw loginError
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen.') }
+    finally { setBusy(false) }
+  }
+
+  async function createPost(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !userId) return notify('Bitte melde dich zuerst an.')
+    if (!caption.trim() && !mediaFile) return notify('Füge einen Text oder ein Foto hinzu.')
+    if (mediaFile && mediaFile.size > 50 * 1024 * 1024) return notify('Dateien dürfen maximal 50 MB groß sein.')
+    setBusy(true)
+    let createdPostId: string | null = null
+    try {
+      const { data: post, error } = await supabase.from('posts').insert({ author_id: userId, caption: caption.trim() || null }).select('id').single()
+      if (error) throw error
+      createdPostId = post.id
+      if (mediaFile) {
+        const ext = mediaFile.name.split('.').pop() || 'jpg'
+        const path = userId + '/' + crypto.randomUUID() + '.' + ext
+        const { error: uploadError } = await supabase.storage.from('public-media').upload(path, mediaFile, { upsert: false })
+        if (uploadError) throw uploadError
+        const { error: mediaError } = await supabase.from('media').insert({
+          post_id: post.id, owner_id: userId, storage_path: path,
+          media_type: mediaFile.type.startsWith('video/') ? 'video' : 'image',
+        })
+        if (mediaError) throw mediaError
+      }
+      setCaption(''); setMediaFile(null); setShowPostForm(false); await loadContent(); notify('Beitrag veröffentlicht.')
+    } catch (error) {
+      if (createdPostId) await supabase.from('posts').delete().eq('id', createdPostId)
+      notify(error instanceof Error ? error.message : 'Beitrag konnte nicht gespeichert werden.')
+    } finally { setBusy(false) }
+  }
+
+  async function toggleLike(post: Post) {
+    if (!supabase || !userId) return notify('Zum Liken bitte anmelden.')
+    const existing = post.likes.some(like => like.user_id === userId)
+    const result = existing
+      ? await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', userId)
+      : await supabase.from('likes').insert({ post_id: post.id, user_id: userId })
+    if (result.error) notify(result.error.message)
+    else await loadContent()
+  }
+
+  async function addComment(event: FormEvent, postId: string) {
+    event.preventDefault()
+    if (!supabase || !userId) return notify('Zum Kommentieren bitte anmelden.')
+    const body = (commentDrafts[postId] ?? '').trim()
+    if (!body) return
+    const { error } = await supabase.from('comments').insert({ post_id: postId, author_id: userId, body })
+    if (error) notify(error.message)
+    else { setCommentDrafts(current => ({ ...current, [postId]: '' })); await loadContent() }
+  }
+
+  async function createInvite() {
+    if (!supabase || !isAdmin) return
+    setBusy(true)
+    const { data, error } = await supabase.functions.invoke('create-invite', { body: {} })
+    if (error) notify(error.message)
+    else if (data?.url) { setInviteUrl(data.url); await navigator.clipboard?.writeText(data.url); notify('Einladungslink erstellt und kopiert.') }
+    setBusy(false)
+  }
+
+  async function createHighlight(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !userId || !highlightTitle.trim()) return
+    const { error } = await supabase.from('highlights').insert({ owner_id: userId, title: highlightTitle.trim() })
+    if (error) notify(error.message)
+    else { setHighlightTitle(''); await loadContent(); notify('Highlight erstellt.') }
+  }
+
+  async function updateProfile(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !userId || !profile) return
+    const { error } = await supabase.from('profiles').update({ display_name: profile.display_name, username: profile.username, bio: profile.bio }).eq('id', userId)
+    if (error) notify(error.message); else notify('Profil gespeichert.')
+  }
+
+  async function signOut() {
+    if (!supabase) return
+    await supabase.auth.signOut()
+    setProfile(null); setIsAdmin(false); setView('Startseite')
+  }
+
+  const publicUrl = (path: string) => supabase?.storage.from('public-media').getPublicUrl(path).data.publicUrl ?? ''
 
   return <div className="app-shell">
-    <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
-      <div className="brand"><div className="brand-mark"><Sparkles size={20} /></div><span>friends<span className="brand-light">space</span></span><button className="mobile-close" onClick={() => setMobileNav(false)}><X size={19}/></button></div>
+    <aside className="sidebar">
+      <a className="brand" href="/"><span className="brand-mark"><Sparkles size={20}/></span><span>friends<span className="brand-light">space</span></span></a>
       <div className="space-label">DEIN BEREICH</div>
-      <nav>{nav.map(item => <button key={item.label} className={`nav-item ${active === item.label ? 'active' : ''}`} onClick={() => { setActive(item.label); setMobileNav(false) }}><item.icon size={19}/><span>{item.label}</span>{item.label === 'Aktivitäten' && <i className="nav-dot"/>}</button>)}</nav>
+      <nav>{nav.map(item => <button key={item.label} className={view === item.label ? 'nav-item active' : 'nav-item'} onClick={() => setView(item.label)}><item.icon size={18}/>{item.label}</button>)}
+        {isAdmin && <button className={view === 'Admin' ? 'nav-item active' : 'nav-item'} onClick={() => setView('Admin')}><Shield size={18}/>Einladungen</button>}
+      </nav>
       <div className="sidebar-bottom">
-        <div className="invite-card"><div className="invite-icon"><Link2 size={17}/></div><strong>Dein Kreis wächst</strong><p>Lade deine Lieblingsmenschen zu FriendsSpace ein.</p><button onClick={() => setShowInvite(true)}>Freunde einladen <Plus size={14}/></button></div>
-        <button className="nav-item"><Settings size={19}/><span>Einstellungen</span></button>
-        <div className="profile-mini"><div className="avatar avatar-me">TD</div><div className="profile-mini-text"><strong>Dein Profil</strong><span>Mitglied</span></div><MoreHorizontal size={19}/></div>
+        {isAdmin && <div className="invite-card"><div className="invite-icon"><Link2 size={17}/></div><strong>Dein Kreis wächst</strong><p>Nur eingeladene Menschen können beitreten.</p><button onClick={() => setView('Admin')}>Einladen <Plus size={14}/></button></div>}
+        {profile ? <div className="profile-mini"><div className="avatar avatar-me">{profile.display_name.slice(0, 2).toUpperCase()}</div><div className="profile-mini-text"><strong>{profile.display_name}</strong><span>@{profile.username}</span></div><button className="icon-button" onClick={() => void signOut()} title="Abmelden"><LogOut size={16}/></button></div> : <button className="nav-item" onClick={() => setAuthMode('login')}>Anmelden</button>}
       </div>
     </aside>
-    {mobileNav && <button className="mobile-scrim" onClick={() => setMobileNav(false)} aria-label="Menü schließen"/>}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu/></button><div className="breadcrumb">Dein privater Kreis <span>/</span> <b>{active}</b></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Momente suchen …"/></label><button className="icon-button notification" onClick={() => setActive('Aktivitäten')} aria-label="Benachrichtigungen"><Bell size={19}/><i/></button><div className="avatar avatar-me top-avatar">TD</div></div></header>
+      <header className="topbar"><div className="breadcrumb">Dein privater Kreis <span>/</span> <b>{view}</b></div><div className="top-actions"><label className="searchbox"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Momente suchen …"/></label>{profile && <div className="avatar avatar-me top-avatar">{profile.display_name.slice(0, 2).toUpperCase()}</div>}</div></header>
       <div className="content">
-        <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> MIT DEINEN MENSCHEN</div><h1>{active === 'Startseite' ? <>Schön, dass du <em>da bist.</em></> : active}</h1><p className="subtitle">Die schönsten Momente sind die, die wir miteinander teilen.</p></div><button className="primary-button" onClick={() => setShowComposer(true)}><Plus size={18}/> Beitrag erstellen</button></section>
-        <section className="stories-section"><div className="section-heading"><div><h2>Deine Menschen</h2><p>Was bei deinen Freunden passiert</p></div><button className="text-button" onClick={() => setActive('Freunde')}>Alle ansehen <span>→</span></button></div><div className="stories">{stories.map((s, i) => <button className="story" key={s.name} onClick={() => i === 0 ? setShowComposer(true) : toast(`Story von ${s.name} wird geladen`)}><div className={`story-ring ${s.color}`}><div className={`story-avatar ${s.color}`}>{s.initials}</div></div><span>{s.name}</span></button>)}</div></section>
-        <div className="feed-layout"><section className="feed-column"><div className="section-heading feed-heading"><div><h2>{active === 'Fotoalbum' ? 'Das Fotoalbum' : active === 'Highlights' ? 'Deine Highlights' : 'Momente aus deinem Kreis'}</h2><p>Ein kleiner Einblick in eure Welt</p></div><button className="filter-button" onClick={() => toast('Du siehst die neuesten Beiträge')}>Neueste <ChevronDown size={15}/></button></div>
-          {active === 'Freunde' ? <div className="friends-grid">{people.map(p => <div className="friend-card" key={p.name}><div className={`avatar avatar-${p.color}`}>{p.initials}</div><strong>{p.name}</strong><span>Zuletzt aktiv: {p.status}</span><button onClick={() => toast(`Profil von ${p.name} geöffnet`)}>Profil ansehen</button></div>)}</div> :
-          <div className="photo-grid">{filtered.map((photo, i) => <article className={`photo-card photo-card-${i % 3}`} key={photo.id}><div className="photo-wrap"><img src={photo.src} alt={photo.caption}/><button className="photo-more" aria-label="Mehr Optionen"><MoreHorizontal size={19}/></button><div className="photo-overlay"><span>{photo.place}</span></div></div><div className="photo-info"><div className="post-author"><div className="avatar avatar-small">{photo.avatar}</div><div><strong>{photo.user}</strong><span>vor {i + 1} Std.</span></div></div><p>{photo.caption}</p><div className="post-actions"><button className={liked.includes(photo.id) ? 'is-liked' : ''} onClick={() => toggle(photo.id, liked, setLiked)}><Heart size={17} fill={liked.includes(photo.id) ? 'currentColor' : 'none'}/><span>{photo.likes + (liked.includes(photo.id) ? 1 : 0)}</span></button><button onClick={() => toast('Kommentare werden mit Supabase aktiviert')}><MessageCircle size={17}/><span>Kommentieren</span></button><button className={saved.includes(photo.id) ? 'is-saved' : ''} onClick={() => toggle(photo.id, saved, setSaved)} aria-label="Speichern"><Bookmark size={17} fill={saved.includes(photo.id) ? 'currentColor' : 'none'}/></button></div></div></article>)}</div>}
-          {filtered.length === 0 && active !== 'Freunde' && <div className="empty-state"><Camera size={28}/><strong>Keine Momente gefunden</strong><span>Versuche einen anderen Suchbegriff.</span></div>}
-          <div className="load-more"><span/> Das ist erstmal alles <span/></div>
-        </section>
-        <aside className="right-column"><div className="side-card circle-card"><div className="side-card-title"><div><span className="eyebrow">DEIN FRIENDSSPACE</span><h3>Euer kleiner Kosmos.</h3></div><div className="orbit-icon"><Sparkles size={20}/></div></div><p>Ein Ort für echte Begegnungen, gemeinsame Erinnerungen und alles dazwischen.</p><div className="stats-row"><div><strong>04</strong><span>Freunde</span></div><div><strong>128</strong><span>Momente</span></div><div><strong>12</strong><span>Highlights</span></div></div></div>
-          <div className="side-card online-card"><div className="side-card-title"><h3>Deine Freunde</h3><span className="online-count">2 online</span></div>{people.slice(0, 3).map((p, i) => <div className="online-person" key={p.name}><div className={`avatar avatar-${p.color}`}>{p.initials}<i className={i < 2 ? 'online' : ''}/></div><div><strong>{p.name}</strong><span>{i < 2 ? 'Gerade online' : p.status}</span></div><button onClick={() => toast(`Nachricht an ${p.name} (bald verfügbar)`)}><MessageCircle size={17}/></button></div>)}<button className="all-friends" onClick={() => setActive('Freunde')}>Alle Freunde ansehen <span>→</span></button></div>
-          <div className="side-quote"><span>“</span><p>Erinnerungen sind kleine Zeitreisen, die wir gemeinsam machen.</p><small>FÜR DIE MOMENTE, DIE BLEIBEN</small></div>
-        </aside></div>
+        <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> MIT DEINEN MENSCHEN</div><h1>{view === 'Startseite' ? <>Schön, dass du <em>da bist.</em></> : view}</h1><p className="subtitle">Die schönsten Momente sind die, die wir miteinander teilen.</p></div>{profile && <button className="primary-button" onClick={() => setShowPostForm(true)}><Plus size={18}/> Beitrag erstellen</button>}</section>
+        {!isSupabaseConfigured && <div className="setup-notice"><Shield size={20}/><div><strong>Supabase ist noch nicht verbunden</strong><p>Trage die Projekt-URL und den anon key aus Supabase in <code>.env.local</code> ein. Danach werden Anmeldung, Uploads und Datenbankfunktionen aktiviert.</p></div></div>}
+        {!profile && <section className="auth-card"><div className="modal-symbol"><Users/></div><span className="eyebrow">{authMode === 'join' ? 'DU BIST EINGELADEN?' : 'WILLKOMMEN ZURÜCK'}</span><h2>{authMode === 'join' ? 'Werde Teil des Kreises.' : 'Melde dich bei FriendsSpace an.'}</h2><p>Fotos und öffentliche Beiträge sind für alle sichtbar. Mitglied werden kannst du ausschließlich mit einem gültigen Einladungslink.</p>
+          <form onSubmit={handleAuth} className="auth-form">
+            {authMode === 'join' && <><input value={inviteToken} onChange={e => setInviteToken(e.target.value)} placeholder="Einladungscode" required/><input value={username} onChange={e => setUsername(e.target.value)} placeholder="Benutzername" required minLength={3}/></>}
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="E-Mail-Adresse" required/>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Passwort (mind. 8 Zeichen)" minLength={8} required/>
+            <button className="primary-button" disabled={busy || !isSupabaseConfigured}>{busy ? 'Bitte warten …' : authMode === 'join' ? 'Mit Einladung beitreten' : 'Anmelden'} <Send size={16}/></button>
+          </form>
+          <button className="auth-switch" onClick={() => setAuthMode(authMode === 'login' ? 'join' : 'login')}>{authMode === 'login' ? 'Du hast einen Einladungslink? Konto erstellen' : 'Schon Mitglied? Anmelden'}</button>
+        </section>}
+        {profile && view === 'Profil' && <section className="side-card profile-editor"><h2>Dein Profil</h2><form onSubmit={updateProfile} className="auth-form"><label>Anzeigename<input value={profile.display_name} onChange={e => setProfile({ ...profile, display_name: e.target.value })}/></label><label>Benutzername<input value={profile.username} onChange={e => setProfile({ ...profile, username: e.target.value })}/></label><label>Über dich<textarea value={profile.bio ?? ''} onChange={e => setProfile({ ...profile, bio: e.target.value })}/></label><button className="primary-button">Profil speichern <Check size={16}/></button></form></section>}
+        {profile && view === 'Admin' && isAdmin && <section className="side-card profile-editor"><span className="eyebrow">MITGLIEDER EINLADEN</span><h2>Einladungslink erstellen</h2><p>Einladungslinks sind einmalig verwendbar und laufen nach sieben Tagen ab.</p><button className="primary-button" onClick={() => void createInvite()} disabled={busy}>Einladung erstellen <Link2 size={16}/></button>{inviteUrl && <div className="invite-preview"><span>{inviteUrl}</span><button onClick={() => void navigator.clipboard?.writeText(inviteUrl)}>Kopieren</button></div>}</section>}
+        {profile && view === 'Admin' && !isAdmin && <section className="side-card profile-editor"><h2>Kein Zugriff</h2><p>Die Einladungsverwaltung ist nur für Administratoren sichtbar.</p></section>}
+        {view === 'Highlights' && <section className="side-card profile-editor"><h2>Highlights</h2>{profile && <form className="inline-form" onSubmit={createHighlight}><input value={highlightTitle} onChange={e => setHighlightTitle(e.target.value)} placeholder="Name des Highlights"/><button className="primary-button"><Plus size={16}/> Erstellen</button></form>}<div className="highlight-grid">{highlights.map(item => <article className="highlight-tile" key={item.id}><div className="highlight-cover"><Bookmark size={25}/></div><strong>{item.title}</strong></article>)}</div>{!highlights.length && <p className="empty-copy">Noch keine Highlights vorhanden.</p>}</section>}
+        {view === 'Freunde' && <section className="side-card profile-editor"><h2>Mitglieder</h2><div className="friends-grid">{friends.map(friend => <article className="friend-card" key={friend.id}><div className="avatar">{friend.display_name.slice(0, 2).toUpperCase()}</div><strong>{friend.display_name}</strong><span>@{friend.username}</span></article>)}</div>{!friends.length && <p className="empty-copy">Noch keine weiteren Mitglieder.</p>}</section>}
+        {(view === 'Startseite' || view === 'Fotoalbum') && <div className="feed-layout"><section className="feed-column"><div className="section-heading feed-heading"><div><h2>{view === 'Fotoalbum' ? 'Das öffentliche Fotoalbum' : 'Öffentliche Momente'}</h2><p>Für alle sichtbar – Beiträge nur von Mitgliedern</p></div></div>
+          {loading ? <p className="empty-copy">Inhalte werden geladen …</p> : filteredPosts.length ? <div className="photo-grid">{filteredPosts.map(post => <article className="photo-card" key={post.id}>{post.media.map(media => media.media_type === 'video' ? <video key={media.id} src={publicUrl(media.storage_path)} controls className="feed-media"/> : <img key={media.id} src={publicUrl(media.storage_path)} alt="" className="feed-media"/>)}<div className="photo-info"><div className="post-author"><div className="avatar avatar-small">{post.profiles?.display_name?.slice(0, 2).toUpperCase() ?? 'FS'}</div><div><strong>{post.profiles?.display_name ?? 'FriendsSpace-Mitglied'}</strong><span>{new Date(post.created_at).toLocaleString('de-DE')}</span></div></div>{post.caption && <p>{post.caption}</p>}<div className="post-actions"><button onClick={() => void toggleLike(post)} className={post.likes.some(l => l.user_id === userId) ? 'is-liked' : ''}><Heart size={16}/> {post.likes.length}</button><span><MessageCircle size={16}/> {post.comments.length}</span></div><div className="comments-list">{post.comments.map(comment => <p key={comment.id}><strong>{comment.profiles?.display_name ?? 'Mitglied'}:</strong> {comment.body}</p>)}</div>{profile && <form className="comment-form" onSubmit={event => void addComment(event, post.id)}><input value={commentDrafts[post.id] ?? ''} onChange={event => setCommentDrafts(current => ({ ...current, [post.id]: event.target.value }))} placeholder="Kommentar schreiben …"/><button aria-label="Kommentar senden"><Send size={15}/></button></form>}</div></article>)}</div> : <div className="empty-state"><Camera size={28}/><strong>Noch keine Beiträge</strong><span>Hier erscheinen öffentliche Fotos und Momente aus FriendsSpace.</span></div>}
+        </section><aside className="right-column"><div className="side-card circle-card"><div className="side-card-title"><div><span className="eyebrow">DEIN FRIENDSSPACE</span><h3>Euer kleiner Kosmos.</h3></div><div className="orbit-icon"><Sparkles size={20}/></div></div><p>Ein Ort für echte Begegnungen, gemeinsame Erinnerungen und alles dazwischen.</p><div className="stats-row"><div><strong>{friends.length}</strong><span>Mitglieder</span></div><div><strong>{posts.length}</strong><span>Momente</span></div><div><strong>{highlights.length}</strong><span>Highlights</span></div></div></div><div className="side-quote"><span>“</span><p>Erinnerungen sind kleine Zeitreisen, die wir gemeinsam machen.</p><small>FÜR DIE MOMENTE, DIE BLEIBEN</small></div></aside></div>}
       </div>
-      <footer className="footer"><span>© 2026 FriendsSpace</span><span>Mit Liebe für deinen Freundeskreis gemacht <Heart size={12}/></span><span>Privat im Herzen. Offen für Erinnerungen.</span></footer>
+      <footer className="footer"><span>© 2026 FriendsSpace</span><span>Mit Liebe für deinen Freundeskreis gemacht <Heart size={12}/></span><span>Öffentliche Momente. Geschlossener Mitgliederkreis.</span></footer>
     </main>
-    {showInvite && <div className="modal-backdrop" onClick={() => setShowInvite(false)}><div className="modal" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={() => setShowInvite(false)}><X/></button><div className="modal-symbol"><Link2/></div><span className="eyebrow">DEIN KREIS, DEINE REGELN</span><h2>Lade deine Menschen ein.</h2><p>Bei FriendsSpace können nur Menschen mit einem gültigen Einladungslink Mitglied werden.</p><div className="invite-preview"><span>friendsspace.app/invite/dein-code</span><button onClick={() => { void navigator.clipboard?.writeText('https://friendsspace.app/invite/dein-code'); toast('Demo-Link kopiert') }}><Link2 size={16}/> Kopieren</button></div><small className="demo-note">Demo-Link – echte Einladungen werden nach der Supabase-Einrichtung erstellt.</small><button className="primary-button modal-action" onClick={() => setShowInvite(false)}>Alles klar <Check size={17}/></button></div></div>}
-    {showComposer && <div className="modal-backdrop" onClick={() => setShowComposer(false)}><div className="modal" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={() => setShowComposer(false)}><X/></button><div className="modal-symbol"><Camera/></div><span className="eyebrow">EIN MOMENT FÜR ALLE</span><h2>Was möchtest du teilen?</h2><textarea value={newPost} onChange={e => setNewPost(e.target.value)} placeholder="Erzähl deinen Freunden, was gerade los ist …"/><button className="upload-placeholder" onClick={() => toast('Foto-Upload wird mit Supabase Storage aktiviert')}><Plus size={19}/> Foto oder Video hinzufügen</button><button className="primary-button modal-action" onClick={() => { if (newPost.trim()) toast('Beitrag wird nach Supabase-Verbindung veröffentlicht'); else toast('Schreib zuerst ein paar Worte'); setShowComposer(false) }}>Beitrag vorbereiten <Send size={16}/></button></div></div>}
-    {notice && <div className="toast"><Check size={17}/>{notice}</div>}
+    {showPostForm && <div className="modal-backdrop" onClick={() => setShowPostForm(false)}><div className="modal" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={() => setShowPostForm(false)}><X/></button><div className="modal-symbol"><Camera/></div><span className="eyebrow">EIN MOMENT FÜR ALLE</span><h2>Was möchtest du teilen?</h2><form onSubmit={createPost}><textarea value={caption} onChange={e => setCaption(e.target.value)} placeholder="Erzähl, was gerade los ist …"/><label className="upload-placeholder"><Upload size={19}/> Foto oder Video auswählen<input type="file" accept="image/*,video/*" onChange={e => setMediaFile(e.target.files?.[0] ?? null)}/></label>{mediaFile && <small>{mediaFile.name}</small>}<button className="primary-button modal-action" disabled={busy}>{busy ? 'Wird veröffentlicht …' : 'Veröffentlichen'} <Send size={16}/></button></form></div></div>}
+    {message && <div className="toast"><Check size={17}/>{message}</div>}
   </div>
 }
